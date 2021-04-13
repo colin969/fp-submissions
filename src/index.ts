@@ -1,9 +1,13 @@
+require('dotenv').config()
 import * as bodyParser from 'body-parser';
 import * as cookieParser from 'cookie-parser';
 import * as express from 'express';
-import { minAuthFactory, Role } from './auth';
-import { EXPRESS_REDIRECT_OAUTH_URI, FUSIONAUTH_CLIENT, FUSIONAUTH_CLIENT_SECRET, FUSIONAUTH_LOGIN_URL, FUSIONAUTH_LOGOUT_URL } from './constants';
-import { faServer } from './fusionauth';
+import { specificAuthFactory } from './auth';
+import { EXPRESS_REDIRECT_OAUTH_URI, FUSIONAUTH_CLIENT_ID, FUSIONAUTH_CLIENT_SECRET, FUSIONAUTH_LOGIN_URL, FUSIONAUTH_LOGOUT_URL } from './constants';
+import { fusionAuth } from './fusionauth';
+import { openMongooseConn } from './mongoose';
+import { CurationModel } from './schemas/Curation';
+import { registerUserServices } from './services/user';
 
 const app = express();
 
@@ -19,6 +23,8 @@ router.get('/', (req, res) => {
   res.json({ message: 'Success' });
 });
 
+// Login funcs
+
 router.get('/login', (req, res) => {
   res.redirect(FUSIONAUTH_LOGIN_URL);
 });
@@ -31,11 +37,11 @@ router.get('/logout', (req, res) => {
 router.get('/oauth2callback', (req, res) => {
   const code = req.query.code;
   if (typeof code === 'string' && code != '') {
-    faServer.exchangeOAuthCodeForAccessToken(code, FUSIONAUTH_CLIENT, FUSIONAUTH_CLIENT_SECRET, EXPRESS_REDIRECT_OAUTH_URI)
+    fusionAuth.exchangeOAuthCodeForAccessToken(code, FUSIONAUTH_CLIENT_ID, FUSIONAUTH_CLIENT_SECRET, EXPRESS_REDIRECT_OAUTH_URI)
     .then((authRes) => {
       if (authRes.wasSuccessful()) {
         res.cookie('accessToken', authRes.response.access_token);
-        res.redirect('test');
+        res.redirect('/');
       }
     })
     .catch((err) => {
@@ -46,11 +52,32 @@ router.get('/oauth2callback', (req, res) => {
   }
 });
 
-router.get('/test', minAuthFactory(Role.MEMBER, (req, res) => {
-  res.json({ message: 'TEST' });
+router.get('/test', specificAuthFactory(['member'], async (req, res) => {
+  const testCuration = await CurationModel.create({
+    game: {
+      title: 'D TITLE'
+    },
+    addApps: []
+  });
+  testCuration.save()
+  .then((doc) => {
+    res.send(doc.toJSON());
+  })
+  .catch((err: any) => {
+    console.error(`Cannot save: ${err}`);
+    res.json({ error: err });
+  });
 }));
+
+registerUserServices(router);
 
 app.use('/api', router);
 
-app.listen(port);
-console.log(`Express started on port ${port}`);
+openMongooseConn()
+.then(() => {
+  app.listen(port);
+  console.log(`Express started on port ${port}`);
+})
+.catch((err) => {
+  console.error(`Error connecting to MongoDB, exiting... ${err}`);
+})
